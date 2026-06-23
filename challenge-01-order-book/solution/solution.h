@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <unordered_map>
+#include<bits/stdc++.h>
 
 namespace hftu {
 
@@ -33,6 +34,16 @@ private:
     std::unordered_map<uint64_t, Order> orders_;
     std::map<int64_t, int64_t, std::greater<>> bids_; // price -> total qty, descending
     std::map<int64_t, int64_t> asks_;                  // price -> total qty, ascending
+
+
+    std::vector<int> bids(1000005,0);
+    std::vector<int> asks(1000005,0);
+    std::<Order> orders(100010);
+
+    int64_t best_ask(0);
+    int64_t best_bid(0);
+
+
 };
 
 } // namespace hftu
