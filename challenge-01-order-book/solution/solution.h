@@ -37,9 +37,15 @@
 
     // std::vector<int64_t> bids_qty_;
     // std::vector<int64_t> asks_qty_;
-    std::vector<std::vector<int64_t>> levels_;
-    std::vector<Order> orders_array_;
-    std::vector<std::vector<uint64_t>> bitmasks_;
+    // std::vector<std::vector<int64_t>> levels_;
+    // std::vector<Order> orders_array_;
+    // std::vector<std::vector<uint64_t>> bitmasks_;
+
+        int64_t levels_[2][1 << 20]; // 2 sides, 1M price levels
+        Order orders_array_[1 << 20]; // 1M orders
+        uint64_t bitmasks_[2][1 << 14]; // 2 sides
+
+        
 
         mutable int64_t current_best_bid_;
         mutable int64_t current_best_ask_;
