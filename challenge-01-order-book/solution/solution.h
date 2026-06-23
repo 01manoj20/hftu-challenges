@@ -3,9 +3,9 @@
 // Edit this file and solution.cpp to implement your solution.
 
 #include <cstdint>
-#include <map>
-#include <unordered_map>
-#include<bits/stdc++.h>
+#include <vector>
+#include <algorithm>
+
 
 namespace hftu {
 
