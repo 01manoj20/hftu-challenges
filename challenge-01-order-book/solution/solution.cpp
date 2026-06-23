@@ -5,85 +5,72 @@
 
 namespace hftu {
 
+    OrderBook::OrderBook() 
+    : bids_qty_(1000005, 0), 
+      asks_qty_(1000005, 0), 
+      orders_array_(100010), 
+      current_best_bid_(0), 
+      current_best_ask_(INT64_MAX) // Initialize to max, not 0!
+{}
+
 void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity) {
-    orders[id] = {side, price, quantity};
-    if (side == 0) {
-        bids[price] += quantity;
-        best_bid = max(best_bid,price);
-    } else {
-        asks[price] += quantity;
-        best_ask = min(best_ask,price);
+    orders_array_[id] = {side, price, quantity};
+    if (side == 0) { // Bid
+        bids_qty_[price] += quantity;
+        current_best_bid_ = std::max(current_best_bid_, price);
+    } else { // Ask
+        asks_qty_[price] += quantity;
+        current_best_ask_ = std::min(current_best_ask_, price);
     }
 }
 
 void OrderBook::cancel_order(uint64_t id) {
-    // auto it = orders_.find(id);
-    // if (it == orders_.end()) return;
+    
 
-    auto it = orders[id];
-    if (side == 0) 
+    auto& ord = orders_array_[id];
+    if (ord.quantity == 0) return;
+
+    if (ord.side == 0) 
     {
-        bids[it.price] -= it.quantity;
-        if((it.price == best_bid))
+        bids_qty_[ord.price] -= ord.quantity;
+        if (ord.price == current_best_bid_ && bids_qty_[ord.price] == 0) 
         {
-            if(bids[it.price] == 0)
-            {
-                for(int i=0;i<bids.size();i++)
-                {
-                    if(bids[i]!=0)
-                        best_bid = i;
+            current_best_bid_ = 0; 
+            for (int64_t i = ord.price - 1; i >= 0; i--) {
+                if (bids_qty_[i] > 0) {
+                    current_best_bid_ = i;
+                    break;
                 }
-            }
-        }
-    } 
-    else 
-    {
-        asks[it.price] -= it.quantity;
-        if((it.price) == best_ask)
-        {
-            if(asks[it.price] == 0)
-            {
-                for(int i = it.price-1;i>=0;i--)
-                {
-                    if(asks[i]!=0)
-                    {
-                        best_ask = i;
-                        break;
-                    }
-                }
-                if(best_ask == it.price)
-                    best_ask = 0;
             }
         }
     }
-    orders.erase(orders.begin()+id);
+    else 
+    {
+        asks_qty_[ord.price] -= ord.quantity;
+        if (ord.price == current_best_ask_ && asks_qty_[ord.price] == 0) 
+        {
+            current_best_ask_ = INT64_MAX; 
+            for (size_t i = ord.price + 1; i < asks_qty_.size(); i++) {
+                if (asks_qty_[i] > 0) {
+                    current_best_ask_ = i;
+                    break;
+                }
+            }
+        }
+    }
 
+    orders_array_.erase(orders_array_.begin() + id);
 
-    // auto& order = it->second;
-    // if (order.side == 0) {
-    //     auto bit = bids_.find(order.price);
-    //     if (bit != bids_.end()) {
-    //         bit->second -= order.quantity;
-    //         if (bit->second <= 0) bids_.erase(bit);
-    //     }
-    // } else {
-    //     auto ait = asks_.find(order.price);
-    //     if (ait != asks_.end()) {
-    //         ait->second -= order.quantity;
-    //         if (ait->second <= 0) asks_.erase(ait);
-    //     }
-    // }
-    // orders_.erase(it);
 }
 
 int64_t OrderBook::best_bid() const {
     // return bids_.empty() ? 0 : bids_.begin()->first;
-    return best_bid;
+    return current_best_bid_;
 }
 
 int64_t OrderBook::best_ask() const {
     // return asks_.empty() ? 0 : asks_.begin()->first;
-    return best_ask;
+    return current_best_ask_ == INT64_MAX ? 0 : current_best_ask_;
 }
 
 } // namespace hftu
