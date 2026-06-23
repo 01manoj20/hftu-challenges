@@ -17,10 +17,14 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity
     orders_array_[id] = {side, price, quantity};
     if (side == 0) { // Bid
         bids_qty_[price] += quantity;
-        current_best_bid_ = std::max(current_best_bid_, price);
+        if (quantity > 0) {
+            current_best_bid_ = std::max(current_best_bid_, price);
+        }
     } else { // Ask
         asks_qty_[price] += quantity;
-        current_best_ask_ = std::min(current_best_ask_, price);
+        if (quantity > 0) {
+            current_best_ask_ = std::min(current_best_ask_, price);
+        }
     }
 }
 
