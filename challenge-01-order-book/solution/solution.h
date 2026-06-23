@@ -35,11 +35,11 @@
             int64_t quantity;
         };
 
-        // std::vector<int64_t> bids_qty_;
-        // std::vector<int64_t> asks_qty_;
-        alignas(64) int64_t levels_[2][1000005];
-        alignas(64) uint64_t bitmasks_[2][16000];
-        alignas(64) Order orders_array_[1000100];
+    // std::vector<int64_t> bids_qty_;
+    // std::vector<int64_t> asks_qty_;
+    std::vector<std::vector<int64_t>> levels_;
+    std::vector<Order> orders_array_;
+    std::vector<std::vector<uint64_t>> bitmasks_;
 
         mutable int64_t current_best_bid_;
         mutable int64_t current_best_ask_;
