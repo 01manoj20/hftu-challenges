@@ -10,7 +10,11 @@
 namespace hftu {
 
 class OrderBook {
+
 public:
+    
+    OrderBook();
+    
     // Add a new order. side: 0=buy(bid), 1=sell(ask)
     void add_order(uint64_t id, int side, int64_t price, int64_t quantity);
 
