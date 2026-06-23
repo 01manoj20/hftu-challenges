@@ -39,6 +39,7 @@ private:
     // std::vector<int64_t> asks_qty_;
     std::vector<std::vector<int64_t>> levels_;
     std::vector<Order> orders_array_;
+    std::vector<std::vector<uint64_t>> bitmasks_;
 
     int64_t current_best_bid_;
     int64_t current_best_ask_;
