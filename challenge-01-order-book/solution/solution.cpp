@@ -63,7 +63,7 @@ void OrderBook::cancel_order(uint64_t id) {
         }
     }
 
-    orders_array_.erase(orders_array_.begin() + id);
+    ord.quantity = 0; // Mark as canceled
 
 }
 
