@@ -37,12 +37,12 @@ private:
 
     // std::vector<int64_t> bids_qty_;
     // std::vector<int64_t> asks_qty_;
-    // std::vector<std::vector<int64_t>> levels_;
-    // std::vector<Order> orders_array_;
-    // std::vector<std::vector<uint64_t>> bitmasks_;
-    int64_t levels_[2][1000005]; // 0: bid, 1: ask
-    Order orders_array_[100010]; // Array of orders indexed by ID
-    uint64_t bitmasks_[2][16000]; // 0: bid,
+    std::vector<std::vector<int64_t>> levels_;
+    std::vector<Order> orders_array_;
+    std::vector<std::vector<uint64_t>> bitmasks_;
+    // int64_t levels_[2][1000005]; // 0: bid, 1: ask
+    // Order orders_array_[100010]; // Array of orders indexed by ID
+    // uint64_t bitmasks_[2][16000]; // 0: bid,
 
     int64_t current_best_bid_;
     int64_t current_best_ask_;

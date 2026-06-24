@@ -8,12 +8,12 @@ namespace hftu {
     OrderBook::OrderBook(): 
     // : bids_qty_(1000005, 0), 
     //   asks_qty_(1000005, 0), 
-    //   levels_(2, std::vector<int64_t>(1000005, 0)),
-    //   bitmasks_(2, std::vector<uint64_t>(16000, 0)),
-    //   orders_array_(100010), 
-    levels_{},
-    orders_array_{},
-    bitmasks_{},
+      levels_(2, std::vector<int64_t>(1000005, 0)),
+      bitmasks_(2, std::vector<uint64_t>(16000, 0)),
+      orders_array_(100010), 
+    // levels_{},
+    // orders_array_{},
+    // bitmasks_{},
     current_best_bid_(0), 
     current_best_ask_(INT64_MAX) // Initialize to max, not 0!
 {}
