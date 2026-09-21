@@ -7,6 +7,7 @@
 //   START: CPUID (serialize) -> RDTSC (read counter)
 //   END:   RDTSCP (read counter + serialize) -> CPUID (full drain)
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +30,7 @@ inline int pin_to_isolated(int) { return -1; }
 // ---------------------------------------------------------------------------
 // TSC cycle measurement
 // On x86: CPUID+RDTSC/RDTSCP+CPUID per Intel white paper 324264-001.
+// On ARM64: cntvct_el0 virtual timer counter (fixed-frequency ticks, not cycles).
 // On other platforms: fallback to clock_gettime (nanoseconds, not cycles).
 // Scores from non-x86 platforms are NOT comparable to certified scores.
 // ---------------------------------------------------------------------------
@@ -63,9 +65,9 @@ inline uint64_t cycle_end() {
 
 #elif defined(__aarch64__) || defined(_M_ARM64)
 
-// ARM64: use the Performance Monitors cycle counter (PMCCNTR_EL0).
-// Falls back to clock_gettime if the counter is not accessible.
-#include <time.h>
+// ARM64: read cntvct_el0, the generic virtual timer counter. It ticks at a
+// fixed frequency (typically 24MHz-1GHz), not at CPU clock — values are timer
+// ticks, not cycles, so they are NOT comparable to certified x86 scores.
 
 inline uint64_t _arm64_rdtsc() {
     uint64_t val;
@@ -92,19 +94,58 @@ inline uint64_t cycle_end() { return cycle_start(); }
 #endif
 
 // ---------------------------------------------------------------------------
+// Lightweight fenced cycle read (cycle_light)
+// A single light fence instead of cycle_start/cycle_end's full CPUID
+// serialization. Use when the measured region is only a handful of cycles and
+// the heavy serialization would swamp the signal (e.g. a cache-residency
+// probe): take one cycle_light() before and one after the region.
+// Same portability story as above — x86 lfence+rdtsc, ARM64 isb+cntvct_el0,
+// else clock_gettime ns. Non-x86 results are NOT comparable to certified scores.
+// ---------------------------------------------------------------------------
+
+#if defined(__x86_64__) || defined(_M_X64)
+inline uint64_t cycle_light() {
+    uint32_t lo, hi;
+    asm volatile("lfence\n\trdtsc" : "=a"(lo), "=d"(hi) :: "memory");
+    return (static_cast<uint64_t>(hi) << 32) | lo;
+}
+#elif defined(__aarch64__) || defined(_M_ARM64)
+inline uint64_t cycle_light() {
+    uint64_t val;
+    asm volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(val) :: "memory");
+    return val;
+}
+#else
+inline uint64_t cycle_light() { return cycle_start(); }
+#endif
+
+// ---------------------------------------------------------------------------
 // Compiler barriers
 // ---------------------------------------------------------------------------
 
 #if defined(__GNUC__) || defined(__clang__)
 
+// Constraint ordering matters: clang handles "r,m" fine, but GCC fails
+// with "impossible constraint in 'asm'" when `value` is larger than a
+// register (e.g. struct types used in some challenges). GCC needs "m,r"
+// so it prefers memory when the type won't fit in a register. This is
+// the same pattern used by Google Benchmark's DoNotOptimize.
 template <typename T>
 inline void do_not_optimize(T const& value) {
+#if defined(__clang__)
     asm volatile("" : : "r,m"(value) : "memory");
+#else
+    asm volatile("" : : "m,r"(value) : "memory");
+#endif
 }
 
 template <typename T>
 inline void do_not_optimize(T& value) {
+#if defined(__clang__)
     asm volatile("" : "+r,m"(value) : : "memory");
+#else
+    asm volatile("" : "+m,r"(value) : : "memory");
+#endif
 }
 
 inline void clobber() {
@@ -235,9 +276,9 @@ inline int run_benchmarks() {
 
         std::printf("    {\n");
         std::printf("      \"name\": \"%s\",\n", r.name);
-        std::printf("      \"iterations\": %lu,\n", r.iterations);
-        std::printf("      \"ops_per_iteration\": %lu,\n", r.ops_per_iteration);
-        std::printf("      \"total_cycles\": %lu,\n", r.total_cycles);
+        std::printf("      \"iterations\": %" PRIu64 ",\n", r.iterations);
+        std::printf("      \"ops_per_iteration\": %" PRIu64 ",\n", r.ops_per_iteration);
+        std::printf("      \"total_cycles\": %" PRIu64 ",\n", r.total_cycles);
         std::printf("      \"cycles_per_op\": %.2f\n", cycles_per_op);
         std::printf("    }%s\n", (i + 1 < results.size()) ? "," : "");
     }

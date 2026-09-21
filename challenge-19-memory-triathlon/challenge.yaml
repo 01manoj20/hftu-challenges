@@ -1,0 +1,87 @@
+title: "Challenge 19: Memory Triathlon"
+slug: memory-triathlon
+track: cpp_latency
+description: |
+  Write a **custom allocator** — and only the allocator. We replay a recorded
+  order-book allocation trace through it and time three legs at once:
+
+  ```
+  score = mean(allocate) + mean(free) + mean(access)    // CPU cycles, lower wins
+  ```
+
+  ### The workload
+
+  The trace is the **domain-object lifecycle of a limit-order book** driven by
+  realistic market flow: one object is born on every order add, price-level
+  creation, and symbol activation, and dies on cancel/fill/empty. Three fixed,
+  public size classes:
+
+  | class | size | what it is |
+  |---|---|---|
+  | `Order` | 64 B | one resting order |
+  | `Level` | 128 B | one price level (a queue of orders) |
+  | `Shard` | 256 B | one symbol's book |
+
+  Allocate and free are the obvious legs — pool the size classes, keep an O(1)
+  free-list, and you leave `malloc` far behind. The **access** leg is the
+  interesting one.
+
+  ### Hotness — a placement game
+
+  Every object carries a **hotness** hint (0..10) at `allocate()` time: a stable
+  **per-symbol** activity level (busy instruments are read far more, all through
+  an object's life — and unlike a price level's distance from the touch, the
+  symbol doesn't drift). Co-locate a hot symbol's Orders + Levels + Shard and its
+  working set stays L1/L2-resident; scatter them and every read eats a cache or
+  TLB miss. That placement decision is the whole access leg.
+
+  ### The surge
+
+  Your constructor is handed a **ShapeTable** — the steady-state peak live counts
+  per class. Size your pools for it. But the certified trace contains a secret
+  **out-of-distribution surge**: at a moment you are not told, order flow floods
+  far past every regime in the table (think 4×+ the live population), then
+  drains. You must **grow gracefully** — a few large slab allocations whose one-off
+  cost is lost in the mean. An allocator that faults, or degrades across the
+  whole surge, is not.
+
+  ### Correctness is enforced
+
+  The harness writes integrity tokens into the first and last 8 bytes of every
+  block and verifies them on access and free. Hand the same bytes to two live
+  objects, undersize a block, or drop one, and the run is **rejected** — there is
+  no scoring your way around correctness.
+
+  ### Getting started
+
+  ```bash
+  cd challenge-19-memory-triathlon
+  cmake -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
+  ./build/benchmark           # runs on the bundled sample.trace
+  ```
+
+  Edit `solution/solution.h`. The baseline forwards to `aligned_alloc`/`free` and
+  ignores hotness — correct, but it is the bronze floor. Beat it.
+
+  > **Note:** the local `sample.trace` is short and surge-free. The certified run
+  > uses a different, longer held-out trace with the surprise surge and a private
+  > integrity salt — so don't overfit to the sample, and don't try to special-case
+  > the integrity bytes.
+time_limit_seconds: 120
+memory_limit_mb: 4096
+daily_submission_limit: 10
+published: true
+goals:
+  - key: composite
+    name: "Triathlon Score"
+    benchmark: BM_Triathlon
+    unit: cycles
+    order: asc
+badges:
+  # Hz2-calibrated on the held-out trace, mean-per-leg scoring:
+  #   malloc baseline ~458, naive pool ~266 (silver), engineered ~226 (gold).
+  gold: 250
+  silver: 300
+  bronze: 420
+weight: 4.0
