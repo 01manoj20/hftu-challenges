@@ -65,7 +65,7 @@ void OrderBook::free_maybe_huge(T* ptr, size_t count) {
 OrderBook::OrderBook()
     : levels_{alloc_maybe_huge<int64_t>(kLevelsSize), alloc_maybe_huge<int64_t>(kLevelsSize)},
       bitmasks_{alloc_maybe_huge<uint64_t>(kChunks), alloc_maybe_huge<uint64_t>(kChunks)},
-      orders_array_(kMaxOrders),
+      orders_array_(alloc_maybe_huge<Order>(kMaxOrders)),
       best_{0, INT64_MIN}
 {}
 
@@ -74,6 +74,7 @@ OrderBook::~OrderBook() {
     free_maybe_huge(levels_[1], kLevelsSize);
     free_maybe_huge(bitmasks_[0], kChunks);
     free_maybe_huge(bitmasks_[1], kChunks);
+    free_maybe_huge(orders_array_, kMaxOrders);
 }
 
 void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity) {

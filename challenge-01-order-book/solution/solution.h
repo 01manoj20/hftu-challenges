@@ -3,7 +3,6 @@
 // Edit this file and solution.cpp to implement your solution.
 
 #include <cstdint>
-#include <vector>
 #include <array>
 #include <algorithm>
 
@@ -72,7 +71,11 @@ private:
     // inline, not itself heap-allocated.
     std::array<int64_t*, 2> levels_;
     std::array<uint64_t*, 2> bitmasks_;
-    std::vector<Order> orders_array_;
+    // Also random-access by id (whichever active order a cancel happens to
+    // pick), so it gets the same huge-page treatment as levels_/bitmasks_,
+    // just over a smaller actually-touched footprint (~480KB for this
+    // benchmark's ~60k ids vs. the full 8MB table).
+    Order* orders_array_;
 
     int64_t best_[2];
 
