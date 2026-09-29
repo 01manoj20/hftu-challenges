@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <array>
 #include <algorithm>
+#include <unordered_map>
 
 
 namespace hftu {
@@ -16,9 +17,10 @@ public:
     OrderBook();
     ~OrderBook();
 
-    // levels_/bitmasks_ are raw mmap'd (Linux) allocations now, not
-    // std::vector — copying/assigning an OrderBook would double-free them,
-    // and nothing in the benchmark ever needs to copy one.
+    // price_table_/bitmasks_/orders_array_ are raw mmap'd (Linux)
+    // allocations now, not std::vector — copying/assigning an OrderBook
+    // would double-free them, and nothing in the benchmark ever needs to
+    // copy one.
     OrderBook(const OrderBook&) = delete;
     OrderBook& operator=(const OrderBook&) = delete;
 
@@ -45,6 +47,18 @@ private:
         uint8_t active;     // explicit flag: quantity==0 is a valid input we must not alias
     };
 
+    // One slot in the compact per-price hash table (see price_table_ below).
+    // price==0 marks a slot as never-claimed; a price, once claimed by a
+    // slot, keeps that slot for the OrderBook's whole lifetime — count
+    // toggling to 0 means "no orders resting here right now", not "slot
+    // free". This sidesteps open-addressing's usual deletion problem: a
+    // slot's identity never changes after being claimed, so probe chains
+    // stay valid without needing tombstones.
+    struct PriceSlot {
+        int32_t price;
+        int32_t count;  // number of active orders resting at this price
+    };
+
     static constexpr int64_t kMaxPrice = 1'000'000;
     static constexpr size_t kLevelsSize = kMaxPrice + 5;
     static constexpr size_t kChunks = kLevelsSize / 64 + 1;
@@ -54,8 +68,45 @@ private:
     // heap-overflows past ~100k distinct ids — verified with ASan).
     static constexpr size_t kMaxOrders = 1'000'005;
 
-    // price is uniform-random over [1, 1,000,000], so levels_/bitmasks_
-    // (~8MB each) get touched on effectively random 4KB pages — on Linux
+    // price_table_ replaces a dense int64-per-price array (8MB/side,
+    // touched on an effectively random page every call) with a compact
+    // open-addressing hash table sized for REALISTIC occupancy, not the
+    // full theoretical price range. Measured on the actual benchmark
+    // generator: ~30,000 distinct prices ever claimed per side by the end
+    // of a 100,000-op run. kPriceTableSlots gives ~9x that headroom
+    // (~11% load factor), while the genuinely-touched footprint (~30,000
+    // slots x 8 bytes =~240KB/side) is small enough to have a real shot
+    // at L2 residency, unlike the old 8MB table.
+    //
+    // Correctness for the full spec (up to 1,000,000 active orders — the
+    // spec's guarantee, not this benchmark's specific distribution) is
+    // preserved via overflow_: if a side's price_table_
+    // is ever completely full of OTHER distinct prices when a new one
+    // needs a slot, that price is tracked in overflow_ instead. This is
+    // the "compact storage for the common case, fallback for the rest"
+    // pattern — never hit by the actual benchmark's workload (verified),
+    // only by adversarial/out-of-spec-for-this-generator inputs.
+    static constexpr size_t kPriceTableBits = 18;
+    static constexpr size_t kPriceTableSlots = size_t(1) << kPriceTableBits;
+    static constexpr size_t kPriceTableMask = kPriceTableSlots - 1;
+    static constexpr uint64_t kHashMul = 0x9E3779B97F4A7C15ULL; // Fibonacci hashing
+
+    static size_t hash_price(int64_t price) {
+        return static_cast<size_t>((static_cast<uint64_t>(price) * kHashMul) >> (64 - kPriceTableBits));
+    }
+
+    // Returns a pointer to this price's count, claiming an empty slot for
+    // it if not already present. Returns nullptr if the table is entirely
+    // full of OTHER distinct prices (caller falls back to overflow_).
+    int32_t* find_or_create_slot(int side, int64_t price);
+    // Returns a pointer to this price's count if it's claimed a slot in
+    // the fast table; nullptr if not present there (caller checks
+    // overflow_ — the price must be in one or the other, since it was
+    // necessarily added through this same logic).
+    int32_t* find_existing_slot(int side, int64_t price);
+
+    // price is uniform-random over [1, 1,000,000], so bitmasks_ (~8MB
+    // combined) gets touched on effectively random 4KB pages — on Linux
     // that's ~2000 distinct pages fighting over a TLB with far fewer
     // entries. alloc_maybe_huge backs these with an explicit MAP_HUGETLB
     // reservation (2MB pages -> ~4 pages instead of ~2000), not a THP
@@ -69,11 +120,19 @@ private:
     // array<T*,2> instead of vector<vector<>>: side indexing becomes
     // fixed-offset (no extra heap-pointer load) since the outer container is
     // inline, not itself heap-allocated.
-    std::array<int64_t*, 2> levels_;
+    //
+    // bitmasks_ is kept as-is (dense, 1 bit per price over the full
+    // range, ~125KB/side) — it's what makes "find the next occupied
+    // price" cheap regardless of how sparse the book is (one cache line
+    // covers 512 prices' occupancy, vs. 8 for a per-price value array),
+    // and it doesn't care whether a price's count lives in price_table_
+    // or overflow_.
     std::array<uint64_t*, 2> bitmasks_;
+    std::array<PriceSlot*, 2> price_table_;
+    std::array<std::unordered_map<int64_t, int32_t>, 2> overflow_;
     // Also random-access by id (whichever active order a cancel happens to
-    // pick), so it gets the same huge-page treatment as levels_/bitmasks_,
-    // just over a smaller actually-touched footprint (~480KB for this
+    // pick), so it gets the same huge-page treatment as bitmasks_, just
+    // over a smaller actually-touched footprint (~480KB for this
     // benchmark's ~60k ids vs. the full 8MB table).
     Order* orders_array_;
 
