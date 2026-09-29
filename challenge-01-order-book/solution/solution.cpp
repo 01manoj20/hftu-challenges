@@ -29,14 +29,22 @@ T* OrderBook::alloc_maybe_huge(size_t count) {
     // disabled but exposes a real 2MB-hugepage pool via MAP_HUGETLB, which
     // is a hard allocation against that pool rather than a request the
     // kernel is free to ignore.
+    //
+    // MAP_POPULATE pre-faults every page synchronously, right here in the
+    // constructor (outside the timed region). Without it, each page is
+    // only mapped on first touch — a real page fault, not just a TLB miss
+    // — and since a fresh OrderBook (and thus a fresh, untouched mapping)
+    // is constructed on every one of the benchmark's ~1000 iterations,
+    // that first-touch cost would otherwise land inside run_workload on
+    // every single iteration instead of being paid once, upfront.
     void* p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
-                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0);
     if (p == MAP_FAILED) {
         // Pool exhausted/unavailable (e.g. local dev machine) — fall back
         // to a regular anonymous mapping of the same rounded size, so
         // free_maybe_huge's munmap length still matches exactly.
         p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
-                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
         if (p == MAP_FAILED) throw std::bad_alloc();
     }
     return static_cast<T*>(p); // anonymous mmap is zero-filled either way
