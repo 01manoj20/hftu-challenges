@@ -55,9 +55,10 @@ private:
     std::array<std::vector<uint64_t>, 2> bitmasks_;
     std::vector<Order> orders_array_;
 
-    int64_t current_best_bid_;
-    int64_t current_best_ask_;
+    // int64_t current_best_bid_;
+    // int64_t current_best_ask_;
 
+    int64_t best_[2];
 
 };
 

@@ -8,8 +8,8 @@ OrderBook::OrderBook()
     : levels_{std::vector<int64_t>(kLevelsSize, 0), std::vector<int64_t>(kLevelsSize, 0)},
       bitmasks_{std::vector<uint64_t>(kChunks, 0), std::vector<uint64_t>(kChunks, 0)},
       orders_array_(kMaxOrders),
-      current_best_bid_(0),
-      current_best_ask_(INT64_MAX) // Initialize to max, not 0!
+      best_{0,INT64_MIN}
+    //   current_best_ask_(INT64_MAX) 
 {}
 
 void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity) {
@@ -24,10 +24,14 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity
     }
     lvl += quantity;
 
-    if (side == 0) // Bid
-        current_best_bid_ = std::max(current_best_bid_, price);
-    else
-        current_best_ask_ = std::min(current_best_ask_, price);
+    int64_t signed_price = (side == 0) ? price : -price;
+    best_[side] = std::max(best_[side],signed_price);
+
+
+    // if (side == 0) 
+    //     current_best_bid_ = std::max(current_best_bid_, price);
+    // else
+    //     current_best_ask_ = std::min(current_best_ask_, price);
 }
 
 void OrderBook::cancel_order(uint64_t id) {
@@ -50,18 +54,18 @@ void OrderBook::cancel_order(uint64_t id) {
 
         if (side == 0)
         {
-            if (price == current_best_bid_)
+            if (price == best_[0])
             {
-                current_best_bid_ = 0;
+                best_[0] = 0;
                 uint64_t mask = bitmasks_[0][chunk] & ((1ULL << bit) - 1);
 
                 if (mask != 0) {
-                    current_best_bid_ = (chunk * 64) + (63 - __builtin_clzll(mask));
+                    best_[0] = (chunk * 64) + (63 - __builtin_clzll(mask));
                 }
                 else {
                     for (int64_t c = chunk - 1; c >= 0; c--) {
                         if (bitmasks_[0][c] != 0) {
-                            current_best_bid_ = (c * 64) + (63 - __builtin_clzll(bitmasks_[0][c]));
+                            best_[0] = (c * 64) + (63 - __builtin_clzll(bitmasks_[0][c]));
                             break;
                         }
                     }
@@ -70,18 +74,18 @@ void OrderBook::cancel_order(uint64_t id) {
         }
         else
         {
-            if (price == current_best_ask_)
+            if (price == -best_[1])
             {
-                current_best_ask_ = INT64_MAX;
+                best_[1] = INT64_MIN;
                 uint64_t mask = (bit == 63) ? 0 : (bitmasks_[1][chunk] & (~0ULL << (bit + 1)));
 
                 if (mask != 0) {
-                    current_best_ask_ = (chunk * 64) + __builtin_ctzll(mask);
+                    best_[1] = -((chunk * 64) + __builtin_ctzll(mask));
                 }
                 else {
                     for (size_t c = chunk + 1; c < kChunks; c++) {
                         if (bitmasks_[1][c] != 0) {
-                            current_best_ask_ = (c * 64) + __builtin_ctzll(bitmasks_[1][c]);
+                            best_[1] = -((c * 64) + __builtin_ctzll(bitmasks_[1][c]));
                             break;
                         }
                     }
@@ -95,11 +99,11 @@ void OrderBook::cancel_order(uint64_t id) {
 }
 
 int64_t OrderBook::best_bid() const {
-    return current_best_bid_;
+    return best_[0];
 }
 
 int64_t OrderBook::best_ask() const {
-    return current_best_ask_ == INT64_MAX ? 0 : current_best_ask_;
+    return (best_[1] == INT64_MIN) ? 0:-best_[1];
 }
 
 } // namespace hftu
