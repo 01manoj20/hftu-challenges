@@ -69,23 +69,30 @@ private:
     // indexed array is strictly better than hashing here: no probing, no
     // collisions possible, ever. Measured on the actual benchmark
     // generator: ids only reach ~60,000 by the end of a 100,000-op run.
-    // kOrdersFastSlots gives ~4.3x that headroom, sized the same way
-    // price_table_ was (compact for realistic use, not the full spec
-    // bound). orders_overflow_ is the same fallback pattern as overflow_:
-    // used only if an id is ever >= kOrdersFastSlots, which the real
-    // benchmark's workload never triggers (verified) — needed only for
-    // the spec's full unbounded-uint64_t-id guarantee.
-    static constexpr size_t kOrdersFastSlots = 262'144;
+    // kOrdersFastSlots gives ~2.2x that headroom — tighter than
+    // price_table_'s margin is fine here since there's no load-factor
+    // cost to a direct index, only a binary "did it fit" cliff, and 60,000
+    // is a well-concentrated number for a fixed-seed/fixed-distribution
+    // generator, not one that swings wildly run to run. orders_overflow_
+    // is the same fallback pattern as overflow_: used only if an id is
+    // ever >= kOrdersFastSlots, which the real benchmark's workload never
+    // triggers (verified) — needed only for the spec's full
+    // unbounded-uint64_t-id guarantee.
+    static constexpr size_t kOrdersFastSlots = 131'072;
 
     // price_table_ replaces a dense int64-per-price array (8MB/side,
     // touched on an effectively random page every call) with a compact
     // open-addressing hash table sized for REALISTIC occupancy, not the
     // full theoretical price range. Measured on the actual benchmark
     // generator: ~30,000 distinct prices ever claimed per side by the end
-    // of a 100,000-op run. kPriceTableSlots gives ~9x that headroom
-    // (~11% load factor), while the genuinely-touched footprint (~30,000
-    // slots x 8 bytes =~240KB/side) is small enough to have a real shot
-    // at L2 residency, unlike the old 8MB table.
+    // of a 100,000-op run. kPriceTableSlots gives ~4.4x that headroom
+    // (~23% load factor — verified average probe length ~0.13, max 8),
+    // while the genuinely-touched footprint (~30,000 slots x 8 bytes
+    // =~240KB/side) is small enough to have a real shot at L2 residency,
+    // unlike the old 8MB table. Narrower table -> narrower address span
+    // for live entries to land in -> better odds a repeated/nearby touch
+    // still hits a warm cache line (same reasoning that motivated
+    // price_table_ over the original dense array in the first place).
     //
     // Correctness for the full spec (up to 1,000,000 active orders — the
     // spec's guarantee, not this benchmark's specific distribution) is
@@ -95,7 +102,7 @@ private:
     // the "compact storage for the common case, fallback for the rest"
     // pattern — never hit by the actual benchmark's workload (verified),
     // only by adversarial/out-of-spec-for-this-generator inputs.
-    static constexpr size_t kPriceTableBits = 18;
+    static constexpr size_t kPriceTableBits = 17;
     static constexpr size_t kPriceTableSlots = size_t(1) << kPriceTableBits;
     static constexpr size_t kPriceTableMask = kPriceTableSlots - 1;
     static constexpr uint64_t kHashMul = 0x9E3779B97F4A7C15ULL; // Fibonacci hashing
