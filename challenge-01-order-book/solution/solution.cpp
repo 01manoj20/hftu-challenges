@@ -63,31 +63,65 @@ void OrderBook::free_maybe_huge(T* ptr, size_t count) {
 }
 
 OrderBook::OrderBook()
-    : levels_{alloc_maybe_huge<int64_t>(kLevelsSize), alloc_maybe_huge<int64_t>(kLevelsSize)},
-      bitmasks_{alloc_maybe_huge<uint64_t>(kChunks), alloc_maybe_huge<uint64_t>(kChunks)},
+    : bitmasks_{alloc_maybe_huge<uint64_t>(kChunks), alloc_maybe_huge<uint64_t>(kChunks)},
+      price_table_{alloc_maybe_huge<PriceSlot>(kPriceTableSlots), alloc_maybe_huge<PriceSlot>(kPriceTableSlots)},
       orders_array_(alloc_maybe_huge<Order>(kMaxOrders)),
       best_{0, INT64_MIN}
 {}
 
 OrderBook::~OrderBook() {
-    free_maybe_huge(levels_[0], kLevelsSize);
-    free_maybe_huge(levels_[1], kLevelsSize);
     free_maybe_huge(bitmasks_[0], kChunks);
     free_maybe_huge(bitmasks_[1], kChunks);
+    free_maybe_huge(price_table_[0], kPriceTableSlots);
+    free_maybe_huge(price_table_[1], kPriceTableSlots);
     free_maybe_huge(orders_array_, kMaxOrders);
+}
+
+int32_t* OrderBook::find_or_create_slot(int side, int64_t price) {
+    PriceSlot* table = price_table_[side];
+    size_t idx = hash_price(price);
+    for (size_t probes = 0; probes < kPriceTableSlots; ++probes) {
+        PriceSlot& slot = table[idx];
+        if (slot.price == price) return &slot.count;
+        if (slot.price == 0) {
+            slot.price = static_cast<int32_t>(price);
+            slot.count = 0;
+            return &slot.count;
+        }
+        idx = (idx + 1) & kPriceTableMask;
+    }
+    return nullptr; // every slot permanently claimed by some other price
+}
+
+int32_t* OrderBook::find_existing_slot(int side, int64_t price) {
+    PriceSlot* table = price_table_[side];
+    size_t idx = hash_price(price);
+    for (size_t probes = 0; probes < kPriceTableSlots; ++probes) {
+        PriceSlot& slot = table[idx];
+        if (slot.price == price) return &slot.count;
+        if (slot.price == 0) return nullptr; // never claimed here -> must be in overflow_
+        idx = (idx + 1) & kPriceTableMask;
+    }
+    return nullptr;
 }
 
 void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity) {
     orders_array_[id] = {static_cast<int32_t>(price), static_cast<uint16_t>(quantity),
                           static_cast<uint8_t>(side), 1};
 
-    int64_t& lvl = levels_[side][price];
-    if (lvl == 0) {
+    int32_t old_count;
+    if (int32_t* slot = find_or_create_slot(side, price)) {
+        old_count = (*slot)++;
+    } else {
+        int32_t& cnt = overflow_[side][price]; // 0 if this is a new key
+        old_count = cnt++;
+    }
+
+    if (old_count == 0) {
         uint64_t chunk = price / 64;
         uint64_t bit = price % 64;
         bitmasks_[side][chunk] |= (1ULL << bit);
     }
-    lvl += quantity;
 
     int64_t signed_price = (side == 0) ? price : -price;
     best_[side] = std::max(best_[side], signed_price);
@@ -101,10 +135,17 @@ void OrderBook::cancel_order(uint64_t id) {
     int64_t price = ord.price;
     int side = ord.side;
 
-    int64_t& lvl = levels_[side][price];
-    lvl -= ord.quantity;
+    int32_t new_count;
+    if (int32_t* slot = find_existing_slot(side, price)) {
+        new_count = --(*slot);
+    } else {
+        // Must exist: this price was necessarily added through add_order's
+        // identical find_or_create_slot/overflow_ logic before.
+        auto it = overflow_[side].find(price);
+        new_count = --(it->second);
+    }
 
-    if (lvl == 0)
+    if (new_count == 0)
     {
         uint64_t chunk = price / 64;
         uint64_t bit = price % 64;
