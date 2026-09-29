@@ -17,7 +17,7 @@ public:
     OrderBook();
     ~OrderBook();
 
-    // price_table_/bitmasks_/orders_array_ are raw mmap'd (Linux)
+    // price_table_/bitmasks_/orders_fast_ are raw mmap'd (Linux)
     // allocations now, not std::vector — copying/assigning an OrderBook
     // would double-free them, and nothing in the benchmark ever needs to
     // copy one.
@@ -62,11 +62,20 @@ private:
     static constexpr int64_t kMaxPrice = 1'000'000;
     static constexpr size_t kLevelsSize = kMaxPrice + 5;
     static constexpr size_t kChunks = kLevelsSize / 64 + 1;
-    // Ids are unbounded uint64_t per the spec, but active orders are capped at
-    // 1,000,000; size the direct-index table to that bound (the previous
-    // 100,010 only happened to survive the shipped 100k-op benchmark and
-    // heap-overflows past ~100k distinct ids — verified with ASan).
-    static constexpr size_t kMaxOrders = 1'000'005;
+
+    // Unlike price (uniform-random over the full range, hence price_table_
+    // hashing it), ids are assigned sequentially (next_id++ on every add)
+    // — dense and monotonically increasing, never scattered. A direct-
+    // indexed array is strictly better than hashing here: no probing, no
+    // collisions possible, ever. Measured on the actual benchmark
+    // generator: ids only reach ~60,000 by the end of a 100,000-op run.
+    // kOrdersFastSlots gives ~4.3x that headroom, sized the same way
+    // price_table_ was (compact for realistic use, not the full spec
+    // bound). orders_overflow_ is the same fallback pattern as overflow_:
+    // used only if an id is ever >= kOrdersFastSlots, which the real
+    // benchmark's workload never triggers (verified) — needed only for
+    // the spec's full unbounded-uint64_t-id guarantee.
+    static constexpr size_t kOrdersFastSlots = 262'144;
 
     // price_table_ replaces a dense int64-per-price array (8MB/side,
     // touched on an effectively random page every call) with a compact
@@ -130,11 +139,13 @@ private:
     std::array<uint64_t*, 2> bitmasks_;
     std::array<PriceSlot*, 2> price_table_;
     std::array<std::unordered_map<int64_t, int32_t>, 2> overflow_;
-    // Also random-access by id (whichever active order a cancel happens to
-    // pick), so it gets the same huge-page treatment as bitmasks_, just
-    // over a smaller actually-touched footprint (~480KB for this
-    // benchmark's ~60k ids vs. the full 8MB table).
-    Order* orders_array_;
+    // orders_fast_ replaces a direct-indexed array sized to the full
+    // 1,000,005 spec bound (8MB, only ~60,000 of it ever touched by this
+    // benchmark) with one sized to realistic peak id usage instead — same
+    // compaction idea as price_table_, but via a smaller direct index
+    // rather than a hash table, since ids don't need hashing at all.
+    Order* orders_fast_;
+    std::unordered_map<uint64_t, Order> orders_overflow_;
 
     int64_t best_[2];
 

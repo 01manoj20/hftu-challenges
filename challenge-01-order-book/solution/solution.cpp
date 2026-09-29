@@ -65,7 +65,7 @@ void OrderBook::free_maybe_huge(T* ptr, size_t count) {
 OrderBook::OrderBook()
     : bitmasks_{alloc_maybe_huge<uint64_t>(kChunks), alloc_maybe_huge<uint64_t>(kChunks)},
       price_table_{alloc_maybe_huge<PriceSlot>(kPriceTableSlots), alloc_maybe_huge<PriceSlot>(kPriceTableSlots)},
-      orders_array_(alloc_maybe_huge<Order>(kMaxOrders)),
+      orders_fast_(alloc_maybe_huge<Order>(kOrdersFastSlots)),
       best_{0, INT64_MIN}
 {}
 
@@ -74,7 +74,7 @@ OrderBook::~OrderBook() {
     free_maybe_huge(bitmasks_[1], kChunks);
     free_maybe_huge(price_table_[0], kPriceTableSlots);
     free_maybe_huge(price_table_[1], kPriceTableSlots);
-    free_maybe_huge(orders_array_, kMaxOrders);
+    free_maybe_huge(orders_fast_, kOrdersFastSlots);
 }
 
 int32_t* OrderBook::find_or_create_slot(int side, int64_t price) {
@@ -106,8 +106,13 @@ int32_t* OrderBook::find_existing_slot(int side, int64_t price) {
 }
 
 void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity) {
-    orders_array_[id] = {static_cast<int32_t>(price), static_cast<uint16_t>(quantity),
-                          static_cast<uint8_t>(side), 1};
+    Order new_order = {static_cast<int32_t>(price), static_cast<uint16_t>(quantity),
+                        static_cast<uint8_t>(side), 1};
+    if (id < kOrdersFastSlots) {
+        orders_fast_[id] = new_order;
+    } else {
+        orders_overflow_[id] = new_order;
+    }
 
     int32_t old_count;
     if (int32_t* slot = find_or_create_slot(side, price)) {
@@ -129,11 +134,18 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity
 
 void OrderBook::cancel_order(uint64_t id) {
 
-    auto& ord = orders_array_[id];
-    if (!ord.active) return;
+    Order* ord;
+    if (id < kOrdersFastSlots) {
+        ord = &orders_fast_[id];
+    } else {
+        auto it = orders_overflow_.find(id);
+        if (it == orders_overflow_.end()) return; // never added -> no-op, per spec
+        ord = &it->second;
+    }
+    if (!ord->active) return;
 
-    int64_t price = ord.price;
-    int side = ord.side;
+    int64_t price = ord->price;
+    int side = ord->side;
 
     int32_t new_count;
     if (int32_t* slot = find_existing_slot(side, price)) {
@@ -194,7 +206,7 @@ void OrderBook::cancel_order(uint64_t id) {
         }
     }
 
-    ord.active = 0; // Mark as canceled
+    ord->active = 0; // Mark as canceled
 
 }
 
