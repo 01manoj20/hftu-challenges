@@ -15,6 +15,13 @@ class OrderBook {
 public:
 
     OrderBook();
+    ~OrderBook();
+
+    // levels_/bitmasks_ are raw mmap'd (Linux) allocations now, not
+    // std::vector — copying/assigning an OrderBook would double-free them,
+    // and nothing in the benchmark ever needs to copy one.
+    OrderBook(const OrderBook&) = delete;
+    OrderBook& operator=(const OrderBook&) = delete;
 
     // Add a new order. side: 0=buy(bid), 1=sell(ask)
     void add_order(uint64_t id, int side, int64_t price, int64_t quantity);
@@ -48,15 +55,24 @@ private:
     // heap-overflows past ~100k distinct ids — verified with ASan).
     static constexpr size_t kMaxOrders = 1'000'005;
 
-    // array<vector,2> instead of vector<vector<>>: side indexing becomes
+    // price is uniform-random over [1, 1,000,000], so levels_/bitmasks_
+    // (~8MB each) get touched on effectively random 4KB pages — on Linux
+    // that's ~2000 distinct pages fighting over a TLB with far fewer
+    // entries. alloc_maybe_huge backs these with an explicit MAP_HUGETLB
+    // reservation (2MB pages -> ~4 pages instead of ~2000), not a THP
+    // hint, since THP may be disabled; falls back to a plain zeroed array
+    // on non-Linux platforms, where there's no equivalent userspace knob.
+    template <typename T>
+    static T* alloc_maybe_huge(size_t count);
+    template <typename T>
+    static void free_maybe_huge(T* ptr, size_t count);
+
+    // array<T*,2> instead of vector<vector<>>: side indexing becomes
     // fixed-offset (no extra heap-pointer load) since the outer container is
     // inline, not itself heap-allocated.
-    std::array<std::vector<int64_t>, 2> levels_;
-    std::array<std::vector<uint64_t>, 2> bitmasks_;
+    std::array<int64_t*, 2> levels_;
+    std::array<uint64_t*, 2> bitmasks_;
     std::vector<Order> orders_array_;
-
-    // int64_t current_best_bid_;
-    // int64_t current_best_ask_;
 
     int64_t best_[2];
 
