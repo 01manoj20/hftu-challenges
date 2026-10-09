@@ -140,12 +140,4 @@ void OrderBook::cancel_order(uint64_t id) {
 
 }
 
-int64_t OrderBook::best_bid() const {
-    return best_[0];
-}
-
-int64_t OrderBook::best_ask() const {
-    return (best_[1] == INT64_MIN) ? 0 : -best_[1];
-}
-
 } // namespace hftu

@@ -29,11 +29,14 @@ public:
     // Cancel an order by ID. No-op if ID doesn't exist.
     void cancel_order(uint64_t id);
 
+    // Defined here (not in solution.cpp) so the benchmark's translation unit
+    // can inline them: without LTO, a body in another .cpp means a real call.
+
     // Return highest bid price, or 0 if no bids.
-    int64_t best_bid() const;
+    int64_t best_bid() const { return best_[0]; }
 
     // Return lowest ask price, or 0 if no asks.
-    int64_t best_ask() const;
+    int64_t best_ask() const { return (best_[1] == INT64_MIN) ? 0 : -best_[1]; }
 
 private:
     struct Order {
