@@ -50,19 +50,16 @@ int32_t* OrderBook::find_existing_slot(int side, int64_t price) {
 void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity) {
     Order new_order = {static_cast<int32_t>(price), static_cast<uint16_t>(quantity),
                         static_cast<uint8_t>(side), 1};
-    if (id < kOrdersFastSlots) {
-        orders_fast_[id] = new_order;
-    } else {
-        orders_overflow_[id] = new_order;
-    }
+    
+    orders_fast_[id] = new_order;
+    
 
     int32_t old_count;
-    if (int32_t* slot = find_or_create_slot(side, price)) {
-        old_count = (*slot)++;
-    } else {
-        int32_t& cnt = overflow_[side][price]; // 0 if this is a new key
-        old_count = cnt++;
-    }
+    int32_t* slot = find_or_create_slot(side, price);
+    
+    old_count = (*slot)++;
+  
+
 
     if (old_count == 0) {
         uint64_t chunk = price / 64;
@@ -77,27 +74,18 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity
 void OrderBook::cancel_order(uint64_t id) {
 
     Order* ord;
-    if (id < kOrdersFastSlots) {
-        ord = &orders_fast_[id];
-    } else {
-        auto it = orders_overflow_.find(id);
-        if (it == orders_overflow_.end()) return; // never added -> no-op, per spec
-        ord = &it->second;
-    }
+
+    ord = &orders_fast_[id];
+   
     if (!ord->active) return;
 
     int64_t price = ord->price;
     int side = ord->side;
 
     int32_t new_count;
-    if (int32_t* slot = find_existing_slot(side, price)) {
-        new_count = --(*slot);
-    } else {
-        // Must exist: this price was necessarily added through add_order's
-        // identical find_or_create_slot/overflow_ logic before.
-        auto it = overflow_[side].find(price);
-        new_count = --(it->second);
-    }
+    int32_t* slot = find_existing_slot(side, price);
+    new_count = --(*slot);
+    
 
     if (new_count == 0)
     {
