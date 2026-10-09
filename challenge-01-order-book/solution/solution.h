@@ -17,10 +17,9 @@ public:
     OrderBook();
     ~OrderBook();
 
-    // price_table_/bitmasks_/orders_fast_ are raw mmap'd (Linux)
-    // allocations now, not std::vector — copying/assigning an OrderBook
-    // would double-free them, and nothing in the benchmark ever needs to
-    // copy one.
+    // price_table_/bitmasks_/orders_fast_ are raw new[] allocations, not
+    // std::vector — copying/assigning an OrderBook would double-free them,
+    // and nothing in the benchmark ever needs to copy one.
     OrderBook(const OrderBook&) = delete;
     OrderBook& operator=(const OrderBook&) = delete;
 
@@ -120,18 +119,6 @@ private:
     // overflow_ — the price must be in one or the other, since it was
     // necessarily added through this same logic).
     int32_t* find_existing_slot(int side, int64_t price);
-
-    // price is uniform-random over [1, 1,000,000], so bitmasks_ (~8MB
-    // combined) gets touched on effectively random 4KB pages — on Linux
-    // that's ~2000 distinct pages fighting over a TLB with far fewer
-    // entries. alloc_maybe_huge backs these with an explicit MAP_HUGETLB
-    // reservation (2MB pages -> ~4 pages instead of ~2000), not a THP
-    // hint, since THP may be disabled; falls back to a plain zeroed array
-    // on non-Linux platforms, where there's no equivalent userspace knob.
-    template <typename T>
-    static T* alloc_maybe_huge(size_t count);
-    template <typename T>
-    static void free_maybe_huge(T* ptr, size_t count);
 
     // array<T*,2> instead of vector<vector<>>: side indexing becomes
     // fixed-offset (no extra heap-pointer load) since the outer container is
