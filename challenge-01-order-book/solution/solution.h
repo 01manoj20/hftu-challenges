@@ -17,9 +17,6 @@ public:
     OrderBook();
     ~OrderBook();
 
-    // price_table_/bitmasks_/orders_fast_ are raw new[] allocations, not
-    // std::vector — copying/assigning an OrderBook would double-free them,
-    // and nothing in the benchmark ever needs to copy one.
     OrderBook(const OrderBook&) = delete;
     OrderBook& operator=(const OrderBook&) = delete;
 
@@ -29,8 +26,6 @@ public:
     // Cancel an order by ID. No-op if ID doesn't exist.
     void cancel_order(uint64_t id);
 
-    // Defined here (not in solution.cpp) so the benchmark's translation unit
-    // can inline them: without LTO, a body in another .cpp means a real call.
 
     // Return highest bid price, or 0 if no bids.
     int64_t best_bid() const { return best_[0]; }
@@ -39,14 +34,14 @@ public:
     int64_t best_ask() const { return (best_[1] == INT64_MIN) ? 0 : -best_[1]; }
 
 private:
-    struct Order {
-        int32_t price;      // range [1, 1'000'000] fits comfortably
-        uint16_t quantity;  // range [1, 10'000] fits comfortably
-        uint8_t side;
-        uint8_t active;     // explicit flag: quantity==0 is a valid input we must not alias
-    };
+    // What cancel_order needs to remember about an order, packed in 4 bytes
+    // (stored in orders_fast_, indexed by order id):
+    //   bit 0      side
+    //   bits 1..   (price-table slot index + 1); 0 means "no active order"
+    // The slot already holds the price, so the order doesn't store it, and
+    // cancel can jump straight to its slot instead of hashing and probing.
+    // Slots are claimed permanently and never move, so the index stays valid.
 
-    
     struct PriceSlot {
         int32_t price;
         int32_t count;  // number of active orders resting at this price
@@ -67,18 +62,14 @@ private:
         return static_cast<size_t>((static_cast<uint64_t>(price) * kHashMul) >> (64 - kPriceTableBits));
     }
 
-    // Returns a pointer to this price's count,
-    int32_t* find_or_create_slot(int side, int64_t price);
-    
-    // Returns a pointer to this price's count
-    int32_t* find_existing_slot(int side, int64_t price);
+    // Returns the index in price_table_[side] of this price's slot, claiming
+    // an empty one if the price isn't there yet.
+    size_t find_or_create_slot(int side, int64_t price);
 
-
-  
     std::array<uint64_t*, 2> bitmasks_;
     std::array<PriceSlot*, 2> price_table_;
 
-    Order* orders_fast_;
+    uint32_t* orders_fast_;
 
     int64_t best_[2];
 

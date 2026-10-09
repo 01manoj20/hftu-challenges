@@ -7,7 +7,7 @@ namespace hftu {
 OrderBook::OrderBook()
     : bitmasks_{new uint64_t[kChunks](), new uint64_t[kChunks]()},
       price_table_{new PriceSlot[kPriceTableSlots](), new PriceSlot[kPriceTableSlots]()},
-      orders_fast_(new Order[kOrdersFastSlots]()),
+      orders_fast_(new uint32_t[kOrdersFastSlots]()),
       best_{0, INT64_MIN}
 {}
 
@@ -19,47 +19,26 @@ OrderBook::~OrderBook() {
     delete[] orders_fast_;
 }
 
-int32_t* OrderBook::find_or_create_slot(int side, int64_t price) {
+size_t OrderBook::find_or_create_slot(int side, int64_t price) {
     PriceSlot* table = price_table_[side];
     size_t idx = hash_price(price);
     for (size_t probes = 0; probes < kPriceTableSlots; ++probes) {
         PriceSlot& slot = table[idx];
-        if (slot.price == price) return &slot.count;
+        if (slot.price == price) return idx;
         if (slot.price == 0) {
             slot.price = static_cast<int32_t>(price);
             slot.count = 0;
-            return &slot.count;
+            return idx;
         }
         idx = (idx + 1) & kPriceTableMask;
     }
-    return nullptr; // every slot permanently claimed by some other price
 }
 
-int32_t* OrderBook::find_existing_slot(int side, int64_t price) {
-    PriceSlot* table = price_table_[side];
-    size_t idx = hash_price(price);
-    for (size_t probes = 0; probes < kPriceTableSlots; ++probes) {
-        PriceSlot& slot = table[idx];
-        if (slot.price == price) return &slot.count;
-        if (slot.price == 0) return nullptr; // never claimed here -> must be in overflow_
-        idx = (idx + 1) & kPriceTableMask;
-    }
-    return nullptr;
-}
+void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t /*quantity*/) {
+    size_t idx = find_or_create_slot(side, price);
+    orders_fast_[id] = static_cast<uint32_t>((idx + 1) << 1) | static_cast<uint32_t>(side);
 
-void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity) {
-    Order new_order = {static_cast<int32_t>(price), static_cast<uint16_t>(quantity),
-                        static_cast<uint8_t>(side), 1};
-    
-    orders_fast_[id] = new_order;
-    
-
-    int32_t old_count;
-    int32_t* slot = find_or_create_slot(side, price);
-    
-    old_count = (*slot)++;
-  
-
+    int32_t old_count = price_table_[side][idx].count++;
 
     if (old_count == 0) {
         uint64_t chunk = price / 64;
@@ -73,19 +52,14 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t quantity
 
 void OrderBook::cancel_order(uint64_t id) {
 
-    Order* ord;
+    uint32_t ref = orders_fast_[id];
+    if (ref == 0) return;
 
-    ord = &orders_fast_[id];
-   
-    if (!ord->active) return;
+    int side = ref & 1;
+    PriceSlot& slot = price_table_[side][(ref >> 1) - 1];
+    int64_t price = slot.price;
 
-    int64_t price = ord->price;
-    int side = ord->side;
-
-    int32_t new_count;
-    int32_t* slot = find_existing_slot(side, price);
-    new_count = --(*slot);
-    
+    int32_t new_count = --slot.count;
 
     if (new_count == 0)
     {
@@ -136,7 +110,7 @@ void OrderBook::cancel_order(uint64_t id) {
         }
     }
 
-    ord->active = 0; // Mark as canceled
+    orders_fast_[id] = 0; // Mark as canceled
 
 }
 
