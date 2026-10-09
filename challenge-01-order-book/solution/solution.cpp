@@ -7,6 +7,7 @@ namespace hftu {
 OrderBook::OrderBook()
     : bitmasks_{new uint64_t[kChunks](), new uint64_t[kChunks]()},
       price_table_{new PriceSlot[kPriceTableSlots](), new PriceSlot[kPriceTableSlots]()},
+      claimed_{0, 0},
       orders_fast_(new uint32_t[kOrdersFastSlots]()),
       best_{0, INT64_MIN}
 {}
@@ -22,10 +23,14 @@ OrderBook::~OrderBook() {
 size_t OrderBook::find_or_create_slot(int side, int64_t price) {
     PriceSlot* table = price_table_[side];
     size_t idx = hash_price(price);
-    for (size_t probes = 0; probes < kPriceTableSlots; ++probes) {
+    // Terminates: at most 75% of the slots are ever claimed, so an empty slot
+    // always exists somewhere along the probe sequence.
+    for (;;) {
         PriceSlot& slot = table[idx];
         if (slot.price == price) return idx;
         if (slot.price == 0) {
+            if (claimed_[side] >= kPriceTableMaxClaimed) return kNoSlot;
+            ++claimed_[side];
             slot.price = static_cast<int32_t>(price);
             slot.count = 0;
             return idx;
@@ -35,10 +40,23 @@ size_t OrderBook::find_or_create_slot(int side, int64_t price) {
 }
 
 void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t /*quantity*/) {
+    uint32_t v;
+    int32_t old_count;
     size_t idx = find_or_create_slot(side, price);
-    orders_fast_[id] = static_cast<uint32_t>((idx + 1) << 1) | static_cast<uint32_t>(side);
+    if (idx != kNoSlot) {
+        v = static_cast<uint32_t>(idx + 1);
+        old_count = price_table_[side][idx].count++;
+    } else {
+        v = static_cast<uint32_t>(kPriceTableSlots + 1 + price);
+        old_count = price_overflow_[side][price]++;
+    }
 
-    int32_t old_count = price_table_[side][idx].count++;
+    uint32_t ref = (v << 1) | static_cast<uint32_t>(side);
+    if (id < kOrdersFastSlots) {
+        orders_fast_[id] = ref;
+    } else {
+        orders_overflow_[id] = ref;
+    }
 
     if (old_count == 0) {
         uint64_t chunk = price / 64;
@@ -52,14 +70,28 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t /*quanti
 
 void OrderBook::cancel_order(uint64_t id) {
 
-    uint32_t ref = orders_fast_[id];
-    if (ref == 0) return;
+    uint32_t ref;
+    if (id < kOrdersFastSlots) {
+        ref = orders_fast_[id];
+    } else {
+        auto it = orders_overflow_.find(id);
+        if (it == orders_overflow_.end()) return;   // unknown id: no-op
+        ref = it->second;
+    }
+    if (ref == 0) return;                           // unknown or already cancelled: no-op
 
     int side = ref & 1;
-    PriceSlot& slot = price_table_[side][(ref >> 1) - 1];
-    int64_t price = slot.price;
-
-    int32_t new_count = --slot.count;
+    uint32_t v = ref >> 1;
+    int64_t price;
+    int32_t new_count;
+    if (v <= kPriceTableSlots) {
+        PriceSlot& slot = price_table_[side][v - 1];
+        price = slot.price;
+        new_count = --slot.count;
+    } else {
+        price = static_cast<int64_t>(v) - static_cast<int64_t>(kPriceTableSlots) - 1;
+        new_count = --price_overflow_[side][price];
+    }
 
     if (new_count == 0)
     {
@@ -110,7 +142,12 @@ void OrderBook::cancel_order(uint64_t id) {
         }
     }
 
-    orders_fast_[id] = 0; // Mark as canceled
+    // Mark as canceled
+    if (id < kOrdersFastSlots) {
+        orders_fast_[id] = 0;
+    } else {
+        orders_overflow_.erase(id);
+    }
 
 }
 
