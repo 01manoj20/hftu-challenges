@@ -4,9 +4,13 @@
 
 namespace hftu {
 
+// Bit 2j is set iff the 2-bit field j of w is non-zero (all other bits are 0).
+static inline uint64_t occupied(uint64_t w) {
+    return (w | (w >> 1)) & 0x5555555555555555ULL;
+}
+
 OrderBook::OrderBook()
-    : counts_{new uint8_t[kLevelsSize](), new uint8_t[kLevelsSize]()},
-      bitmasks_{new uint64_t[kChunks](), new uint64_t[kChunks]()},
+    : counts_{new uint64_t[kWords](), new uint64_t[kWords]()},
       orders_fast_(new uint32_t[kOrdersFastSlots]()),
       best_{0, INT64_MIN}
 {}
@@ -14,8 +18,6 @@ OrderBook::OrderBook()
 OrderBook::~OrderBook() {
     delete[] counts_[0];
     delete[] counts_[1];
-    delete[] bitmasks_[0];
-    delete[] bitmasks_[1];
     delete[] orders_fast_;
 }
 
@@ -27,20 +29,13 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t /*quanti
         orders_overflow_[id] = ref;
     }
 
-    uint8_t& low = counts_[side][price];
-    bool newly_occupied;
-    if (__builtin_expect(low == 0xFF, 0)) {       // count is full: the extra orders go in extra_
+    uint64_t& word = counts_[side][price >> 5];
+    const unsigned shift = (price & 31) << 1;
+    const unsigned c = (word >> shift) & 3;
+    if (__builtin_expect(c == 3, 0)) {              // field is full: the extra orders go in extra_
         ++extra_[side][price];
-        newly_occupied = false;
     } else {
-        newly_occupied = (low == 0);
-        ++low;
-    }
-
-    if (newly_occupied) {
-        uint64_t chunk = price / 64;
-        uint64_t bit = price % 64;
-        bitmasks_[side][chunk] |= (1ULL << bit);
+        word += 1ULL << shift;                      // c < 3, so no carry into the next field
     }
 
     int64_t signed_price = (side == 0) ? price : -price;
@@ -61,41 +56,42 @@ void OrderBook::cancel_order(uint64_t id) {
 
     int side = ref & 1;
     int64_t price = ref >> 1;
-    uint8_t& low = counts_[side][price];
+    uint64_t& word = counts_[side][price >> 5];
+    const unsigned shift = (price & 31) << 1;
+    const unsigned c = (word >> shift) & 3;
     bool now_empty = false;
-    if (__builtin_expect(low == 0xFF, 0)) {       // count is full: take from extra_ first
+    if (__builtin_expect(c == 3, 0)) {              // field is full: take from extra_ first
         auto it = extra_[side].find(price);
         if (it == extra_[side].end()) {
-            --low;                                  // exactly 255 orders: now 254
+            word -= 1ULL << shift;                  // exactly 3 orders: now 2
         } else if (--it->second == 0) {
-            extra_[side].erase(it);                 // low stays at 255
+            extra_[side].erase(it);                 // field stays at 3
         }
     } else {
-        --low;
-        now_empty = (low == 0);
+        word -= 1ULL << shift;                      // c >= 1 for a live order, so no borrow
+        now_empty = (c == 1);
     }
 
     if (now_empty)
-     {
-        uint64_t chunk = price / 64;
-        uint64_t bit = price % 64;
-
-        bitmasks_[side][chunk] &= ~(1ULL << bit);
+    {
+        const uint64_t* words = counts_[side];
+        const size_t wi = price >> 5;
+        const unsigned j = price & 31;
 
         if (side == 0)
         {
             if (price == best_[0])
             {
                 best_[0] = 0;
-                uint64_t mask = bitmasks_[0][chunk] & ((1ULL << bit) - 1);
-
-                if (mask != 0) {
-                    best_[0] = (chunk * 64) + (63 - __builtin_clzll(mask));
+                uint64_t nz = occupied(words[wi]) & ((1ULL << (2 * j)) - 1);   // fields below this price
+                if (nz != 0) {
+                    best_[0] = (wi << 5) + ((63 - __builtin_clzll(nz)) >> 1);
                 }
                 else {
-                    for (int64_t c = chunk - 1; c >= 0; c--) {
-                        if (bitmasks_[0][c] != 0) {
-                            best_[0] = (c * 64) + (63 - __builtin_clzll(bitmasks_[0][c]));
+                    for (int64_t w = static_cast<int64_t>(wi) - 1; w >= 0; w--) {
+                        uint64_t m = occupied(words[w]);
+                        if (m != 0) {
+                            best_[0] = (w << 5) + ((63 - __builtin_clzll(m)) >> 1);
                             break;
                         }
                     }
@@ -107,15 +103,15 @@ void OrderBook::cancel_order(uint64_t id) {
             if (price == -best_[1])
             {
                 best_[1] = INT64_MIN;
-                uint64_t mask = (bit == 63) ? 0 : (bitmasks_[1][chunk] & (~0ULL << (bit + 1)));
-
-                if (mask != 0) {
-                    best_[1] = -((chunk * 64) + __builtin_ctzll(mask));
+                uint64_t nz = occupied(words[wi]) & ~((2ULL << (2 * j)) - 1);  // fields above this price
+                if (nz != 0) {
+                    best_[1] = -static_cast<int64_t>((wi << 5) + (__builtin_ctzll(nz) >> 1));
                 }
                 else {
-                    for (size_t c = chunk + 1; c < kChunks; c++) {
-                        if (bitmasks_[1][c] != 0) {
-                            best_[1] = -((c * 64) + __builtin_ctzll(bitmasks_[1][c]));
+                    for (size_t w = wi + 1; w < kWords; w++) {
+                        uint64_t m = occupied(words[w]);
+                        if (m != 0) {
+                            best_[1] = -static_cast<int64_t>((w << 5) + (__builtin_ctzll(m) >> 1));
                             break;
                         }
                     }
