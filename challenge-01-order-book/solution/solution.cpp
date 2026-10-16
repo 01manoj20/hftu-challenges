@@ -27,9 +27,17 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t /*quanti
         orders_overflow_[id] = ref;
     }
 
-    int32_t old_count = counts_[side][price]++;
+    uint16_t& low = counts_[side][price];
+    bool newly_occupied;
+    if (__builtin_expect(low == 0xFFFF, 0)) {       // count is full: the extra orders go in extra_
+        ++extra_[side][price];
+        newly_occupied = false;
+    } else {
+        newly_occupied = (low == 0);
+        ++low;
+    }
 
-    if (old_count == 0) {
+    if (newly_occupied) {
         uint64_t chunk = price / 64;
         uint64_t bit = price % 64;
         bitmasks_[side][chunk] |= (1ULL << bit);
@@ -53,10 +61,22 @@ void OrderBook::cancel_order(uint64_t id) {
 
     int side = ref & 1;
     int64_t price = ref >> 1;
-    int32_t new_count = --counts_[side][price];
+    uint16_t& low = counts_[side][price];
+    bool now_empty = false;
+    if (__builtin_expect(low == 0xFFFF, 0)) {       // count is full: take from extra_ first
+        auto it = extra_[side].find(price);
+        if (it == extra_[side].end()) {
+            --low;                                  // exactly 65,535 orders: now 65,534
+        } else if (--it->second == 0) {
+            extra_[side].erase(it);                 // low stays at 65,535
+        }
+    } else {
+        --low;
+        now_empty = (low == 0);
+    }
 
-    if (new_count == 0)
-    {
+    if (now_empty)
+     {
         uint64_t chunk = price / 64;
         uint64_t bit = price % 64;
 
