@@ -32,19 +32,7 @@ private:
     static constexpr size_t kLevelsSize = kMaxPrice + 5;
     static constexpr size_t kChunks = kLevelsSize / 64 + 1;
 
-
-    
-
- 
-    // counts_[side][price] = number of active orders at that price, in 16 bits
-    // (2 MB per side). It stops at 65,535; any orders beyond that are counted
-    // in extra_ instead. The benchmark never has more than a handful of orders
-    // at one price, so extra_ is never touched there, but the spec allows up
-    // to 1,000,000 orders.
-    //     true count = counts_[side][price] + extra_[side][price]
-    // An extra_ entry only exists while counts_ is at 65,535, so
-    // counts_ == 0 always means the price is empty.
-    std::array<uint16_t*, 2> counts_;
+    std::array<uint8_t*, 2> counts_;
     std::array<std::unordered_map<int64_t, uint32_t>, 2> extra_;
 
     std::array<uint64_t*, 2> bitmasks_;

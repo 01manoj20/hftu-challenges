@@ -5,7 +5,7 @@
 namespace hftu {
 
 OrderBook::OrderBook()
-    : counts_{new uint16_t[kLevelsSize](), new uint16_t[kLevelsSize]()},
+    : counts_{new uint8_t[kLevelsSize](), new uint8_t[kLevelsSize]()},
       bitmasks_{new uint64_t[kChunks](), new uint64_t[kChunks]()},
       orders_fast_(new uint32_t[kOrdersFastSlots]()),
       best_{0, INT64_MIN}
@@ -27,9 +27,9 @@ void OrderBook::add_order(uint64_t id, int side, int64_t price, int64_t /*quanti
         orders_overflow_[id] = ref;
     }
 
-    uint16_t& low = counts_[side][price];
+    uint8_t& low = counts_[side][price];
     bool newly_occupied;
-    if (__builtin_expect(low == 0xFFFF, 0)) {       // count is full: the extra orders go in extra_
+    if (__builtin_expect(low == 0xFF, 0)) {       // count is full: the extra orders go in extra_
         ++extra_[side][price];
         newly_occupied = false;
     } else {
@@ -61,14 +61,14 @@ void OrderBook::cancel_order(uint64_t id) {
 
     int side = ref & 1;
     int64_t price = ref >> 1;
-    uint16_t& low = counts_[side][price];
+    uint8_t& low = counts_[side][price];
     bool now_empty = false;
-    if (__builtin_expect(low == 0xFFFF, 0)) {       // count is full: take from extra_ first
+    if (__builtin_expect(low == 0xFF, 0)) {       // count is full: take from extra_ first
         auto it = extra_[side].find(price);
         if (it == extra_[side].end()) {
-            --low;                                  // exactly 65,535 orders: now 65,534
+            --low;                                  // exactly 255 orders: now 254
         } else if (--it->second == 0) {
-            extra_[side].erase(it);                 // low stays at 65,535
+            extra_[side].erase(it);                 // low stays at 255
         }
     } else {
         --low;
