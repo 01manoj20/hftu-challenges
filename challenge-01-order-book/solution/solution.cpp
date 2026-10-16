@@ -5,7 +5,7 @@
 namespace hftu {
 
 OrderBook::OrderBook()
-    : counts_{new int32_t[kLevelsSize](), new int32_t[kLevelsSize]()},
+    : counts_{new uint16_t[kLevelsSize](), new uint16_t[kLevelsSize]()},
       bitmasks_{new uint64_t[kChunks](), new uint64_t[kChunks]()},
       orders_fast_(new uint32_t[kOrdersFastSlots]()),
       best_{0, INT64_MIN}

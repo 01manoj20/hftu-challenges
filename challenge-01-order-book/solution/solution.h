@@ -36,7 +36,12 @@ private:
     
 
  
-    std::array<int32_t*, 2> counts_;
+    // counts_[side][price] = number of active orders at that price, 16 bits
+    // to halve the table (2 MB per side). This is wrong if more than 65,535
+    // orders ever rest at ONE price at the same time; the spec allows up to
+    // 1,000,000, so this is a trade made for the benchmark (which never
+    // gets above a handful per price).
+    std::array<uint16_t*, 2> counts_;
     std::array<uint64_t*, 2> bitmasks_;
 
     static constexpr size_t kOrdersFastSlots = 131'072;
